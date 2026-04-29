@@ -1,8 +1,10 @@
 import 'dotenv/config';
 import Fastify from 'fastify';
 
+import { registerApplicationRoutes } from './routes/applications.js';
 import { registerExecuteRoutes } from './routes/execute.js';
 import { registerJobRoutes } from './routes/jobs.js';
+import { registerProfileRoutes } from './routes/profile.js';
 import { registerSeekRoutes } from './routes/seek.js';
 import { registerVerifyRoutes } from './routes/verify.js';
 
@@ -17,6 +19,8 @@ app.get('/healthz', async () => ({ ok: true }));
 await registerExecuteRoutes(app);
 await registerJobRoutes(app);
 await registerSeekRoutes(app);
+await registerProfileRoutes(app);
+await registerApplicationRoutes(app);
 await registerVerifyRoutes(app);
 
 const port = Number(process.env.PORT ?? '3000');

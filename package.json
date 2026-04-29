@@ -11,7 +11,9 @@
     "build": "tsc -p tsconfig.json",
     "start": "node dist/server.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "seek:extract": "tsx src/seek/cli.ts"
+    "seek:extract": "tsx src/seek/cli.ts",
+    "profile:distill": "tsx src/profile/cli.ts",
+    "apply": "tsx src/application/cli.ts"
   },
   "dependencies": {
     "better-sqlite3": "^12.9.0",
