@@ -5,7 +5,7 @@ import type { StructuredProfile } from '../profile/types.js';
 import type { SeekJob } from '../seek/types.js';
 import type { CompanyBrief, InterviewPack, JobApplication, JobSummary, MatchAnalysis } from './types.js';
 
-const MODEL = process.env.OPENAI_MODEL ?? 'gpt-4.1-mini';
+const MODEL = process.env.OPENAI_MODEL ?? 'gpt-5.4';
 
 type Logger = Pick<FastifyBaseLogger, 'info' | 'warn' | 'error'> | undefined;
 

@@ -27,7 +27,7 @@ Required env vars (see [.env.example](.env.example)):
 | Variable | Default | Notes |
 | --- | --- | --- |
 | `OPENAI_API_KEY` | — | required for any LLM step (distill, match, resume, cover letter) |
-| `OPENAI_MODEL` | `gpt-4.1-mini` | any OpenAI chat-completions model |
+| `OPENAI_MODEL` | `gpt-5.4` | any OpenAI chat-completions model |
 | `PORT` / `HOST` | `3000` / `0.0.0.0` | HTTP server only |
 | `HEADLESS` | `true` | Playwright mode |
 | `PROFILE_DIR` | `<cwd>/profile` | where `profile.md` and `profile.json` live |
