@@ -3,8 +3,11 @@ import 'dotenv/config';
 import { writeFileSync } from 'node:fs';
 
 import { BrowserManager } from '../browser/BrowserManager.js';
+import { createLogger } from '../logger.js';
 import { extractSeekJob } from './SeekJobExtractor.js';
 import { SeekJobStore } from './SeekJobStore.js';
+
+const log = createLogger('seek:cli');
 
 type CliArgs = {
   url?: string;
@@ -59,6 +62,8 @@ async function main() {
     process.exit(1);
   }
 
+  log.info({ url: args.url, noLlm: args.noLlm, noStore: args.noStore, headless: args.headless }, 'seek: starting extraction');
+
   const manager = new BrowserManager();
   let session;
   try {
@@ -69,20 +74,23 @@ async function main() {
       const store = new SeekJobStore();
       store.upsert(job);
       store.close();
+    } else {
+      log.debug('seek: skipping store (--no-store)');
     }
 
     const json = JSON.stringify(job, null, 2);
     if (args.jsonOut) {
       writeFileSync(args.jsonOut, json);
-      console.error(`Wrote ${args.jsonOut}`);
+      log.info({ path: args.jsonOut }, 'seek: wrote job JSON to file');
     }
     process.stdout.write(json + '\n');
+    log.info({ jobId: job.jobId, title: job.title, company: job.company }, 'seek: done');
   } finally {
     await manager.closeAll();
   }
 }
 
 main().catch((err) => {
-  console.error(err);
+  log.error({ err: (err as Error).message, stack: (err as Error).stack }, 'seek: fatal');
   process.exit(1);
 });

@@ -1,12 +1,18 @@
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 
 import Database from 'better-sqlite3';
 
+import { createLogger } from '../logger.js';
 import type { CompanyBrief, InterviewPack, JobApplication } from './types.js';
+
+const log = createLogger('apply:store');
 
 const DEFAULT_DB_PATH = process.env.SEEK_DB_PATH ?? resolve(process.cwd(), 'data', 'seek_jobs.sqlite3');
 const DEFAULT_FILE_DIR = process.env.APPLICATIONS_DIR ?? resolve(process.cwd(), 'output');
+
+const TIMESTAMP_PREFIX = 'last-updated-';
+const TIMESTAMP_SUFFIX = '.txt';
 
 function slugify(s: string | null | undefined, fallback: string): string {
   if (!s) return fallback;
@@ -18,11 +24,20 @@ function slugify(s: string | null | undefined, fallback: string): string {
   return slug || fallback;
 }
 
-function applicationFolderName(app: { generatedAt: string; company: string | null; jobTitle: string }): string {
-  const date = app.generatedAt.slice(0, 10);
+function applicationFolderName(app: { company: string | null; jobTitle: string }): string {
   const companySlug = slugify(app.company, 'unknown-company');
   const titleSlug = slugify(app.jobTitle, 'job');
-  return `${date}-${companySlug}-${titleSlug}`;
+  return `${companySlug}-${titleSlug}`;
+}
+
+/**
+ * Encode an ISO timestamp into a filename-safe form. Colons are not safe on
+ * Windows / older filesystems, so swap them for hyphens, and drop the millisecond
+ * suffix for readability. Example: `last-updated-2026-05-06T08-12-04Z.txt`.
+ */
+function timestampFileName(generatedAt: string): string {
+  const safe = generatedAt.replace(/\.\d+/, '').replace(/:/g, '-');
+  return `${TIMESTAMP_PREFIX}${safe}${TIMESTAMP_SUFFIX}`;
 }
 
 export type SavedFiles = {
@@ -92,6 +107,7 @@ export class ApplicationStore {
     this.db = new Database(dbPath);
     this.db.pragma('journal_mode = WAL');
     this.fileDir = fileDir;
+    log.debug({ dbPath, fileDir }, 'apply-store: opened sqlite db');
     this.migrate();
   }
 
@@ -118,6 +134,7 @@ export class ApplicationStore {
   }
 
   upsert(app: JobApplication): SavedFiles {
+    log.info({ jobId: app.jobId, fitScore: app.matchAnalysis.fitScore }, 'apply-store: upserting application row');
     this.db
       .prepare(
         `
@@ -162,7 +179,9 @@ export class ApplicationStore {
 
   private writeFiles(app: JobApplication): SavedFiles {
     const dir = resolve(this.fileDir, applicationFolderName(app));
+    const folderExisted = existsSync(dir);
     mkdirSync(dir, { recursive: true });
+    log.info({ dir, folderExisted }, 'apply-store: writing application artefacts');
 
     const resumePath = resolve(dir, 'resume.md');
     const coverLetterPath = resolve(dir, 'cover_letter.md');
@@ -172,13 +191,52 @@ export class ApplicationStore {
     const interviewPackPath = resolve(dir, 'interview_pack.md');
 
     writeFileSync(resumePath, app.resumeMarkdown);
+    log.debug({ path: resumePath, chars: app.resumeMarkdown.length }, 'apply-store: wrote resume.md');
     writeFileSync(coverLetterPath, app.coverLetter);
+    log.debug({ path: coverLetterPath, chars: app.coverLetter.length }, 'apply-store: wrote cover_letter.md');
     writeFileSync(matchPath, JSON.stringify(app.matchAnalysis, null, 2));
+    log.debug({ path: matchPath }, 'apply-store: wrote match.json');
     writeFileSync(summaryPath, JSON.stringify(app.jobSummary, null, 2));
+    log.debug({ path: summaryPath }, 'apply-store: wrote job_summary.json');
     writeFileSync(companyBriefPath, renderCompanyBrief(app, app.companyBrief));
+    log.debug({ path: companyBriefPath }, 'apply-store: wrote company_brief.md');
     writeFileSync(interviewPackPath, renderInterviewPack(app, app.interviewPack));
+    log.debug({ path: interviewPackPath }, 'apply-store: wrote interview_pack.md');
+
+    this.writeTimestampMarker(dir, app.generatedAt);
+
+    log.info({ dir, files: 6 }, 'apply-store: all artefacts written');
 
     return { resumePath, coverLetterPath, matchPath, summaryPath, companyBriefPath, interviewPackPath };
+  }
+
+  /**
+   * Write a timestamp marker file inside `dir` whose NAME encodes the latest
+   * application time. Removes any older `last-updated-*.txt` files so only the
+   * most recent marker remains, making the folder a quick visual log of when
+   * the candidate last applied to this role.
+   */
+  private writeTimestampMarker(dir: string, generatedAt: string): void {
+    let removed = 0;
+    try {
+      for (const entry of readdirSync(dir)) {
+        if (entry.startsWith(TIMESTAMP_PREFIX) && entry.endsWith(TIMESTAMP_SUFFIX)) {
+          try {
+            unlinkSync(resolve(dir, entry));
+            removed++;
+          } catch (err) {
+            log.warn({ entry, err: (err as Error).message }, 'apply-store: failed to remove old timestamp marker');
+          }
+        }
+      }
+    } catch (err) {
+      log.warn({ dir, err: (err as Error).message }, 'apply-store: could not enumerate timestamp markers');
+    }
+
+    const fileName = timestampFileName(generatedAt);
+    const path = resolve(dir, fileName);
+    writeFileSync(path, `${generatedAt}\n`);
+    log.info({ path, removedOldMarkers: removed }, 'apply-store: refreshed last-updated marker');
   }
 
   get(jobId: string): JobApplication | null {

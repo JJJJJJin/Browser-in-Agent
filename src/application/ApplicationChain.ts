@@ -1,27 +1,27 @@
-import type { FastifyBaseLogger } from 'fastify';
-
-import { createOpenAIClient } from '../llm/OpenAIClient.js';
+import { callOpenAIJson } from '../llm/callJson.js';
+import { createLogger, type Logger as AppLogger } from '../logger.js';
 import type { StructuredProfile } from '../profile/types.js';
 import type { SeekJob } from '../seek/types.js';
 import type { CompanyBrief, InterviewPack, JobApplication, JobSummary, MatchAnalysis } from './types.js';
 
 const MODEL = process.env.OPENAI_MODEL ?? 'gpt-5.4';
+const moduleLog = createLogger('apply:chain');
 
-type Logger = Pick<FastifyBaseLogger, 'info' | 'warn' | 'error'> | undefined;
+/**
+ * Minimal logger shape used by the chain. Both our `AppLogger` and Fastify's
+ * pino-based logger satisfy these signatures.
+ */
+type Logger = {
+  info(obj: Record<string, unknown>, msg: string): void;
+  info(msg: string): void;
+  warn(obj: Record<string, unknown>, msg: string): void;
+  warn(msg: string): void;
+  error(obj: Record<string, unknown>, msg: string): void;
+  error(msg: string): void;
+};
 
-async function callJson<T>(systemPrompt: string, userPrompt: string): Promise<T> {
-  const client = createOpenAIClient();
-  const resp = await client.chat.completions.create({
-    model: MODEL,
-    response_format: { type: 'json_object' },
-    messages: [
-      { role: 'system', content: systemPrompt },
-      { role: 'user', content: userPrompt },
-    ],
-  });
-  const content = resp.choices[0]?.message?.content;
-  if (!content) throw new Error('LLM returned empty response');
-  return JSON.parse(content) as T;
+async function callJson<T>(step: string, systemPrompt: string, userPrompt: string): Promise<T> {
+  return callOpenAIJson<T>({ step, model: MODEL, systemPrompt, userPrompt });
 }
 
 async function summarizeJob(job: SeekJob): Promise<JobSummary> {
@@ -45,7 +45,7 @@ CLASSIFICATION: ${job.classification ?? 'Unknown'}
 
 DESCRIPTION:
 ${job.description}`;
-  const out = await callJson<Partial<JobSummary>>(system, user);
+  const out = await callJson<Partial<JobSummary>>('apply:summarize-job', system, user);
   return {
     oneLineSummary: out.oneLineSummary ?? '',
     responsibilities: out.responsibilities ?? [],
@@ -74,7 +74,7 @@ ${JSON.stringify(jobSummary, null, 2)}
 
 CANDIDATE PROFILE:
 ${JSON.stringify(profile, null, 2)}`;
-  const out = await callJson<Partial<MatchAnalysis>>(system, user);
+  const out = await callJson<Partial<MatchAnalysis>>('apply:match-analysis', system, user);
   return {
     fitScore: typeof out.fitScore === 'number' ? out.fitScore : 0,
     oneLineFit: out.oneLineFit ?? '',
@@ -122,7 +122,7 @@ ${JSON.stringify(profile, null, 2)}${
       ? `\n\nCANDIDATE PROFILE MARKDOWN (authoritative for project framing — pick the variant best matching the job):\n${rawProfileMarkdown}`
       : ''
   }`;
-  const out = await callJson<{ resumeMarkdown?: string }>(system, user);
+  const out = await callJson<{ resumeMarkdown?: string }>('apply:resume', system, user);
   return out.resumeMarkdown ?? '';
 }
 
@@ -152,7 +152,7 @@ JOB SUMMARY (already extracted):
 ${JSON.stringify(jobSummary, null, 2)}
 
 CANDIDATE LOCATION (for context only, do not personalize the brief): ${profile.contact.location ?? 'Unknown'}`;
-  const out = await callJson<Partial<CompanyBrief>>(system, user);
+  const out = await callJson<Partial<CompanyBrief>>('apply:company-brief', system, user);
   return {
     companyOneLiner: out.companyOneLiner ?? '',
     whatTheyDo: out.whatTheyDo ?? '',
@@ -201,7 +201,7 @@ ${JSON.stringify(match, null, 2)}
 
 CANDIDATE PROFILE:
 ${JSON.stringify(profile, null, 2)}`;
-  const out = await callJson<Partial<InterviewPack>>(system, user);
+  const out = await callJson<Partial<InterviewPack>>('apply:interview-pack', system, user);
   const questions = (out.questions ?? []).map((q) => ({
     question: q.question ?? '',
     category: q.category ?? 'experience',
@@ -246,12 +246,12 @@ ${JSON.stringify(profile, null, 2)}${
       ? `\n\nCANDIDATE PROFILE MARKDOWN (authoritative for project framing):\n${rawProfileMarkdown}`
       : ''
   }`;
-  const out = await callJson<{ coverLetter?: string }>(system, user);
+  const out = await callJson<{ coverLetter?: string }>('apply:cover-letter', system, user);
   return out.coverLetter ?? '';
 }
 
 export type ChainOptions = {
-  logger?: Logger;
+  logger?: Logger | AppLogger;
   rawProfileMarkdown?: string;
 };
 
@@ -260,21 +260,83 @@ export async function runApplicationChain(
   profile: StructuredProfile,
   opts: ChainOptions = {},
 ): Promise<JobApplication> {
-  const log = opts.logger;
+  const log: Logger = (opts.logger as Logger) ?? (moduleLog as unknown as Logger);
+  const chainStart = Date.now();
+  log.info(
+    {
+      jobId: job.jobId,
+      jobTitle: job.title,
+      company: job.company,
+      classification: job.classification,
+      descChars: job.description.length,
+      profileName: profile.name,
+      profileProjects: profile.projects.length,
+      hasRawMarkdown: Boolean(opts.rawProfileMarkdown),
+      model: MODEL,
+    },
+    'chain: starting application chain',
+  );
 
-  log?.info({ jobId: job.jobId }, 'chain: stage 1 — summarizing job');
+  log.info({ jobId: job.jobId }, 'chain: stage 1 — summarizing job');
+  const summarizeStart = Date.now();
   const jobSummary = await summarizeJob(job);
+  log.info(
+    {
+      jobId: job.jobId,
+      stageMs: Date.now() - summarizeStart,
+      mustHaves: jobSummary.mustHaveRequirements.length,
+      niceToHaves: jobSummary.niceToHaveRequirements.length,
+      techStack: jobSummary.techStack,
+      domain: jobSummary.domain,
+      seniority: jobSummary.seniority,
+    },
+    'chain: stage 1 done — job summary',
+  );
 
-  log?.info({ jobId: job.jobId }, 'chain: stage 2 — match analysis');
+  log.info({ jobId: job.jobId }, 'chain: stage 2 — match analysis');
+  const matchStart = Date.now();
   const matchAnalysis = await analyzeMatch(profile, jobSummary);
+  log.info(
+    {
+      jobId: job.jobId,
+      stageMs: Date.now() - matchStart,
+      fitScore: matchAnalysis.fitScore,
+      strengths: matchAnalysis.strengths.length,
+      gaps: matchAnalysis.gaps.length,
+      keywords: matchAnalysis.keywordsToEmphasize,
+    },
+    'chain: stage 2 done — match analysis',
+  );
 
-  log?.info({ jobId: job.jobId }, 'chain: stages 3-6 in parallel — resume, cover letter, company brief, interview pack');
+  log.info({ jobId: job.jobId }, 'chain: stages 3-6 in parallel — resume, cover letter, company brief, interview pack');
+  const parallelStart = Date.now();
   const [resumeMarkdown, coverLetter, companyBrief, interviewPack] = await Promise.all([
     generateResume(profile, jobSummary, matchAnalysis, job, opts.rawProfileMarkdown),
     generateCoverLetter(profile, jobSummary, matchAnalysis, job, opts.rawProfileMarkdown),
     generateCompanyBrief(profile, jobSummary, job),
     generateInterviewPack(profile, jobSummary, matchAnalysis, job),
   ]);
+  log.info(
+    {
+      jobId: job.jobId,
+      stageMs: Date.now() - parallelStart,
+      resumeChars: resumeMarkdown.length,
+      coverLetterChars: coverLetter.length,
+      interviewQuestions: interviewPack.questions.length,
+      companyBriefVerifyItems: companyBrief.thingsToVerify.length,
+    },
+    'chain: stages 3-6 done',
+  );
+
+  log.info(
+    {
+      jobId: job.jobId,
+      totalMs: Date.now() - chainStart,
+      fitScore: matchAnalysis.fitScore,
+      oneLineFit: matchAnalysis.oneLineFit,
+    },
+    'chain: application chain complete',
+  );
 
   return {
     jobId: job.jobId,

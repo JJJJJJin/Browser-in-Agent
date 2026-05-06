@@ -33,6 +33,8 @@ Required env vars (see [.env.example](.env.example)):
 | `PROFILE_DIR` | `<cwd>/profile` | where `profile.md` and `profile.json` live |
 | `APPLICATIONS_DIR` | `<cwd>/output` | where generated resumes etc. land |
 | `SEEK_DB_PATH` | `<cwd>/data/seek_jobs.sqlite3` | SQLite cache for SEEK jobs and applications |
+| `LOG_LEVEL` | `info` | one of `debug`, `info`, `warn`, `error`, `silent` |
+| `LOG_JSON` | `false` | set `true` to emit machine-parseable JSON log lines on stderr |
 
 ## Authoring your profile
 
@@ -120,17 +122,18 @@ npm run apply -- https://www.seek.com.au/job/12345678 --reextract  # force re-fe
 
 ### Output layout
 
-Generated artefacts go to `output/<YYYY-MM-DD>-<company>-<job-title>/`, where company and title are slugified (lowercase, non-alphanumerics → hyphens):
+Generated artefacts go to `output/<company>-<job-title>/`, where company and title are slugified (lowercase, non-alphanumerics → hyphens). Re-running for the same role overwrites the contents in-place. A `last-updated-<timestamp>.txt` marker file inside the folder records the latest run time — its **filename** is the timestamp, so you can see when you last applied at a glance, and only the most recent marker is kept (older ones are removed each run).
 
 ```
 output/
-└── 2026-05-06-canva-senior-backend-engineer/
-    ├── resume.md           # tailored, variant-aware
-    ├── cover_letter.md     # under 250 words, 3 paragraphs
-    ├── company_brief.md    # company + role context, with "things to verify"
-    ├── interview_pack.md   # likely Qs + draft answers + Qs to ask back
-    ├── match.json          # fit score, strengths, gaps, keywords
-    └── job_summary.json    # parsed job structure
+└── canva-senior-backend-engineer/
+    ├── resume.md                            # tailored, variant-aware
+    ├── cover_letter.md                      # under 250 words, 3 paragraphs
+    ├── company_brief.md                     # company + role context, with "things to verify"
+    ├── interview_pack.md                    # likely Qs + draft answers + Qs to ask back
+    ├── match.json                           # fit score, strengths, gaps, keywords
+    ├── job_summary.json                     # parsed job structure
+    └── last-updated-2026-05-06T08-12-04Z.txt  # filename = latest run time (UTC)
 ```
 
 The same data is also stored in the `job_applications` table of `data/seek_jobs.sqlite3` (so you can query history, build a dashboard, etc.).
@@ -209,5 +212,15 @@ mkdir -p profile && $EDITOR profile/profile.md
 npm run apply -- https://www.seek.com.au/job/12345678
 
 # resume + cover letter + brief + interview pack now live in
-# output/<today>-<company>-<title>/
+# output/<company>-<title>/
+# (with a last-updated-<timestamp>.txt marker that refreshes on each re-run)
+```
+
+## Logging
+
+All CLIs emit structured logs to stderr at every step — browser launch, page navigation, JSON-LD parse, LLM request/response with token counts and latency, profile distillation, each chain stage, file writes, and DB upserts. Defaults to human-readable output; set `LOG_JSON=true` for one-JSON-per-line. Crank verbosity with `LOG_LEVEL=debug` or quieten with `LOG_LEVEL=warn`.
+
+```bash
+LOG_LEVEL=debug npm run apply -- <url>     # very verbose
+LOG_JSON=true npm run apply -- <url>       # for piping into jq / log shippers
 ```

@@ -1,7 +1,10 @@
 import type { Page } from 'playwright';
 
-import { createOpenAIClient } from '../llm/OpenAIClient.js';
+import { callOpenAIJson } from '../llm/callJson.js';
+import { createLogger } from '../logger.js';
 import type { SeekJob, SeekSalary } from './types.js';
+
+const log = createLogger('seek:extractor');
 
 type JsonLdJobPosting = {
   '@type'?: string | string[];
@@ -39,7 +42,7 @@ type JsonLdJobPosting = {
   };
 };
 
-const MODEL = process.env.OPENAI_MODEL ?? 'gpt-4.1-mini';
+const MODEL = process.env.OPENAI_MODEL ?? 'gpt-5.4';
 
 function extractJobIdFromUrl(url: string): string {
   const m = url.match(/\/job\/(\d+)/);
@@ -246,22 +249,17 @@ type LlmExtraction = {
 };
 
 async function llmExtract(visibleText: string, title: string): Promise<LlmExtraction | null> {
-  if (!process.env.OPENAI_API_KEY) return null;
-  const client = createOpenAIClient();
-  const prompt = `Extract the SEEK job posting details from the page text below. Return strict JSON with keys: title, company, location, workType, classification, description, bulletPoints (array of strings). Use null for unknown values. Keep description as plain text.\n\nPAGE TITLE: ${title}\n\nPAGE TEXT:\n${visibleText}`;
-
-  const resp = await client.chat.completions.create({
-    model: MODEL,
-    response_format: { type: 'json_object' },
-    messages: [
-      { role: 'system', content: 'You extract structured data from job listings. Output only JSON.' },
-      { role: 'user', content: prompt },
-    ],
-  });
-  const content = resp.choices[0]?.message?.content;
-  if (!content) return null;
+  if (!process.env.OPENAI_API_KEY) {
+    log.warn('seek: LLM fallback skipped (no OPENAI_API_KEY)');
+    return null;
+  }
   try {
-    const parsed = JSON.parse(content) as Partial<LlmExtraction>;
+    const parsed = await callOpenAIJson<Partial<LlmExtraction>>({
+      step: 'seek:extract-fallback',
+      model: MODEL,
+      systemPrompt: 'You extract structured data from job listings. Output only JSON.',
+      userPrompt: `Extract the SEEK job posting details from the page text below. Return strict JSON with keys: title, company, location, workType, classification, description, bulletPoints (array of strings). Use null for unknown values. Keep description as plain text.\n\nPAGE TITLE: ${title}\n\nPAGE TEXT:\n${visibleText}`,
+    });
     return {
       title: parsed.title ?? null,
       company: parsed.company ?? null,
@@ -271,7 +269,8 @@ async function llmExtract(visibleText: string, title: string): Promise<LlmExtrac
       description: parsed.description ?? null,
       bulletPoints: Array.isArray(parsed.bulletPoints) ? parsed.bulletPoints.filter((b): b is string => typeof b === 'string') : [],
     };
-  } catch {
+  } catch (err) {
+    log.warn({ err: (err as Error).message }, 'seek: LLM fallback failed');
     return null;
   }
 }
@@ -282,12 +281,42 @@ export type ExtractOptions = {
 };
 
 export async function extractSeekJob(page: Page, url: string, opts: ExtractOptions = {}): Promise<SeekJob> {
+  const jobId = extractJobIdFromUrl(url);
+  log.info({ jobId, url }, 'seek: navigating to job page');
+  const navStart = Date.now();
   await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 45_000 });
-  await page.waitForSelector('script[type="application/ld+json"], [data-automation="jobAdDetails"]', { timeout: 15_000 }).catch(() => undefined);
+  log.info({ jobId, navMs: Date.now() - navStart }, 'seek: page DOM ready');
+
+  const selectorFound = await page
+    .waitForSelector('script[type="application/ld+json"], [data-automation="jobAdDetails"]', { timeout: 15_000 })
+    .then(() => true)
+    .catch(() => false);
+  log.debug({ jobId, selectorFound }, 'seek: waited for job ad selector');
 
   const data = await readPageData(page);
+  log.info(
+    {
+      jobId,
+      jsonLdBlocks: data.jsonLdRaw.length,
+      hasNextData: Boolean(data.nextData),
+      visibleTextChars: data.visibleText.length,
+      pageTitleChars: data.title.length,
+    },
+    'seek: page data captured',
+  );
+
   const jsonLd = findJobPosting(data.jsonLdRaw);
   const nextFields = findNextJobFields(data.nextData);
+  log.debug(
+    {
+      jobId,
+      foundJsonLdJobPosting: Boolean(jsonLd),
+      nextDataClassification: nextFields.classification,
+      nextDataCompany: nextFields.company,
+      nextDataLocation: nextFields.location,
+    },
+    'seek: structured-data parse complete',
+  );
 
   let title = jsonLd?.title ?? data.title ?? '';
   let descriptionHtml: string | null = jsonLd?.description ?? null;
@@ -301,8 +330,10 @@ export async function extractSeekJob(page: Page, url: string, opts: ExtractOptio
   let source: SeekJob['source'] = jsonLd ? (nextFields.classification ? 'mixed' : 'json-ld') : nextFields.classification ? 'next-data' : 'llm';
 
   if ((!description || description.length < 50) && !opts.noLlm) {
+    log.info({ jobId, descChars: description.length }, 'seek: invoking LLM fallback (description thin)');
     const llm = await llmExtract(data.visibleText, title);
     if (llm) {
+      const before = { title, company, location, workType, descChars: description.length, bullets: bulletPoints.length };
       title = title || llm.title || title;
       company = company ?? llm.company;
       location = location ?? llm.location;
@@ -310,13 +341,41 @@ export async function extractSeekJob(page: Page, url: string, opts: ExtractOptio
       if (!description && llm.description) description = llm.description;
       if (bulletPoints.length === 0 && llm.bulletPoints.length) bulletPoints = llm.bulletPoints;
       source = source === 'json-ld' || source === 'next-data' ? 'mixed' : 'llm';
+      log.info(
+        {
+          jobId,
+          before,
+          after: { title, company, location, workType, descChars: description.length, bullets: bulletPoints.length },
+        },
+        'seek: LLM fallback merged',
+      );
+    } else {
+      log.warn({ jobId }, 'seek: LLM fallback returned no result');
     }
   }
 
-  if (!description) description = data.visibleText;
+  if (!description) {
+    log.warn({ jobId, visibleTextChars: data.visibleText.length }, 'seek: falling back to raw visible text as description');
+    description = data.visibleText;
+  }
+
+  log.info(
+    {
+      jobId,
+      title: title.trim(),
+      company,
+      location,
+      workType,
+      classification: nextFields.classification,
+      descChars: description.length,
+      bullets: bulletPoints.length,
+      source,
+    },
+    'seek: extraction complete',
+  );
 
   return {
-    jobId: extractJobIdFromUrl(url),
+    jobId,
     url,
     title: title.trim(),
     company,

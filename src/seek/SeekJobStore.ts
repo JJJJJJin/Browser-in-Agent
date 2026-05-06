@@ -3,8 +3,10 @@ import { dirname, resolve } from 'node:path';
 
 import Database from 'better-sqlite3';
 
+import { createLogger } from '../logger.js';
 import type { SeekJob } from './types.js';
 
+const log = createLogger('seek:store');
 const DEFAULT_DB_PATH = process.env.SEEK_DB_PATH ?? resolve(process.cwd(), 'data', 'seek_jobs.sqlite3');
 
 export class SeekJobStore {
@@ -14,6 +16,7 @@ export class SeekJobStore {
     mkdirSync(dirname(dbPath), { recursive: true });
     this.db = new Database(dbPath);
     this.db.pragma('journal_mode = WAL');
+    log.debug({ dbPath }, 'seek-store: opened sqlite db');
     this.migrate();
   }
 
@@ -103,12 +106,14 @@ export class SeekJobStore {
       fetchedAt: job.fetchedAt,
       payloadJson: JSON.stringify(job),
     });
+    log.info({ jobId: job.jobId, company: job.company, source: job.source }, 'seek-store: upserted job');
   }
 
   get(jobId: string): SeekJob | null {
     const row = this.db.prepare('SELECT payload_json FROM seek_jobs WHERE job_id = ?').get(jobId) as
       | { payload_json: string }
       | undefined;
+    log.debug({ jobId, hit: Boolean(row) }, 'seek-store: get by id');
     if (!row) return null;
     return JSON.parse(row.payload_json) as SeekJob;
   }
@@ -117,6 +122,7 @@ export class SeekJobStore {
     const row = this.db.prepare('SELECT payload_json FROM seek_jobs WHERE url = ?').get(url) as
       | { payload_json: string }
       | undefined;
+    log.debug({ url, hit: Boolean(row) }, 'seek-store: get by url');
     if (!row) return null;
     return JSON.parse(row.payload_json) as SeekJob;
   }

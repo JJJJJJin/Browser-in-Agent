@@ -1,12 +1,15 @@
 import 'dotenv/config';
 
 import { BrowserManager } from '../browser/BrowserManager.js';
+import { createLogger } from '../logger.js';
 import { ensureStructuredProfile, ProfileNotFoundError, readProfileMarkdown } from '../profile/ProfileStore.js';
 import { extractSeekJob } from '../seek/SeekJobExtractor.js';
 import { SeekJobStore } from '../seek/SeekJobStore.js';
 import type { SeekJob } from '../seek/types.js';
 import { ApplicationStore } from './ApplicationStore.js';
 import { runApplicationChain } from './ApplicationChain.js';
+
+const log = createLogger('apply:cli');
 
 type CliArgs = {
   jobIdOrUrl?: string;
@@ -54,13 +57,17 @@ async function loadOrFetchJob(input: string, opts: { reextract: boolean; headles
   try {
     if (!opts.reextract) {
       const cached = isUrl(input) ? seekStore.getByUrl(input) : seekStore.get(input);
-      if (cached) return cached;
+      if (cached) {
+        log.info({ jobId: cached.jobId, source: 'cache' }, 'apply: loaded job from cache');
+        return cached;
+      }
     }
     if (!isUrl(input)) {
       throw new Error(
         `No cached job for jobId "${input}". Run the seek extractor first, or pass the full SEEK URL with --reextract.`,
       );
     }
+    log.info({ url: input, headless: opts.headless }, 'apply: extracting job from SEEK');
     const manager = new BrowserManager();
     try {
       const session = await manager.getOrCreateSession({ headless: opts.headless });
@@ -82,6 +89,8 @@ async function main() {
     process.exit(1);
   }
 
+  log.info({ jobIdOrUrl: args.jobIdOrUrl, reextract: args.reextract, forceProfile: args.forceProfile }, 'apply: starting');
+
   let profile;
   let rawProfileMarkdown: string | undefined;
   try {
@@ -89,14 +98,14 @@ async function main() {
     rawProfileMarkdown = readProfileMarkdown();
   } catch (err) {
     if (err instanceof ProfileNotFoundError) {
-      console.error(err.message);
+      log.error({ err: err.message }, 'apply: profile not found');
       process.exit(2);
     }
     throw err;
   }
 
   const job = await loadOrFetchJob(args.jobIdOrUrl, { reextract: args.reextract, headless: args.headless });
-  console.error(`Job: ${job.title} @ ${job.company ?? 'Unknown'} (${job.jobId})`);
+  log.info({ jobId: job.jobId, title: job.title, company: job.company }, 'apply: job loaded');
 
   const application = await runApplicationChain(job, profile, { rawProfileMarkdown });
 
@@ -104,17 +113,23 @@ async function main() {
   const files = store.upsert(application);
   store.close();
 
-  console.error(`\nFit score: ${application.matchAnalysis.fitScore}/100 — ${application.matchAnalysis.oneLineFit}`);
-  console.error(`Resume:         ${files.resumePath}`);
-  console.error(`Cover letter:   ${files.coverLetterPath}`);
-  console.error(`Company brief:  ${files.companyBriefPath}`);
-  console.error(`Interview pack: ${files.interviewPackPath}`);
-  console.error(`Match:          ${files.matchPath}`);
-  console.error(`Job summary:    ${files.summaryPath}`);
+  log.info(
+    {
+      fitScore: application.matchAnalysis.fitScore,
+      oneLineFit: application.matchAnalysis.oneLineFit,
+      resume: files.resumePath,
+      coverLetter: files.coverLetterPath,
+      companyBrief: files.companyBriefPath,
+      interviewPack: files.interviewPackPath,
+      match: files.matchPath,
+      summary: files.summaryPath,
+    },
+    'apply: done',
+  );
   process.stdout.write(JSON.stringify(application, null, 2) + '\n');
 }
 
 main().catch((err) => {
-  console.error(err);
+  log.error({ err: (err as Error).message, stack: (err as Error).stack }, 'apply: fatal');
   process.exit(1);
 });
