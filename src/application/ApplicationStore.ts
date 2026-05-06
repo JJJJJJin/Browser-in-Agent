@@ -6,7 +6,24 @@ import Database from 'better-sqlite3';
 import type { CompanyBrief, InterviewPack, JobApplication } from './types.js';
 
 const DEFAULT_DB_PATH = process.env.SEEK_DB_PATH ?? resolve(process.cwd(), 'data', 'seek_jobs.sqlite3');
-const DEFAULT_FILE_DIR = process.env.APPLICATIONS_DIR ?? resolve(process.cwd(), 'data', 'applications');
+const DEFAULT_FILE_DIR = process.env.APPLICATIONS_DIR ?? resolve(process.cwd(), 'output');
+
+function slugify(s: string | null | undefined, fallback: string): string {
+  if (!s) return fallback;
+  const slug = s
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 60);
+  return slug || fallback;
+}
+
+function applicationFolderName(app: { generatedAt: string; company: string | null; jobTitle: string }): string {
+  const date = app.generatedAt.slice(0, 10);
+  const companySlug = slugify(app.company, 'unknown-company');
+  const titleSlug = slugify(app.jobTitle, 'job');
+  return `${date}-${companySlug}-${titleSlug}`;
+}
 
 export type SavedFiles = {
   resumePath: string;
@@ -144,7 +161,7 @@ export class ApplicationStore {
   }
 
   private writeFiles(app: JobApplication): SavedFiles {
-    const dir = resolve(this.fileDir, app.jobId);
+    const dir = resolve(this.fileDir, applicationFolderName(app));
     mkdirSync(dir, { recursive: true });
 
     const resumePath = resolve(dir, 'resume.md');

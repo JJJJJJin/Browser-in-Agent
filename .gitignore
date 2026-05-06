@@ -52,3 +52,6 @@ data/
 
 # personal profile (kept local — never commit)
 profile/
+
+# generated applications (resumes, cover letters, etc. — kept local)
+output/

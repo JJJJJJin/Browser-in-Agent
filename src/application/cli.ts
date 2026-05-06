@@ -1,7 +1,7 @@
 import 'dotenv/config';
 
 import { BrowserManager } from '../browser/BrowserManager.js';
-import { ensureStructuredProfile, ProfileNotFoundError } from '../profile/ProfileStore.js';
+import { ensureStructuredProfile, ProfileNotFoundError, readProfileMarkdown } from '../profile/ProfileStore.js';
 import { extractSeekJob } from '../seek/SeekJobExtractor.js';
 import { SeekJobStore } from '../seek/SeekJobStore.js';
 import type { SeekJob } from '../seek/types.js';
@@ -83,8 +83,10 @@ async function main() {
   }
 
   let profile;
+  let rawProfileMarkdown: string | undefined;
   try {
     profile = await ensureStructuredProfile({ force: args.forceProfile });
+    rawProfileMarkdown = readProfileMarkdown();
   } catch (err) {
     if (err instanceof ProfileNotFoundError) {
       console.error(err.message);
@@ -96,7 +98,7 @@ async function main() {
   const job = await loadOrFetchJob(args.jobIdOrUrl, { reextract: args.reextract, headless: args.headless });
   console.error(`Job: ${job.title} @ ${job.company ?? 'Unknown'} (${job.jobId})`);
 
-  const application = await runApplicationChain(job, profile);
+  const application = await runApplicationChain(job, profile, { rawProfileMarkdown });
 
   const store = new ApplicationStore();
   const files = store.upsert(application);

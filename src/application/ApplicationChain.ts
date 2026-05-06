@@ -90,6 +90,7 @@ async function generateResume(
   jobSummary: JobSummary,
   match: MatchAnalysis,
   job: SeekJob,
+  rawProfileMarkdown?: string,
 ): Promise<string> {
   const system = `You generate tailored resumes in MARKDOWN. Rules:
 - Reorder/emphasize experiences and projects most relevant to the job
@@ -98,6 +99,14 @@ async function generateResume(
 - DO NOT invent experience, dates, technologies, or metrics not in the candidate profile
 - Concise (~400-600 words, one page worth)
 - Structure: # Name, contact line, > headline/summary, ## Experience, ## Projects, ## Skills, ## Education
+
+VARIANT-AWARE PROJECT FRAMING. The candidate may have written multiple framings of the same project for different role targets (e.g. backend version vs AI engineer version vs data engineer version). When CANDIDATE PROFILE MARKDOWN is provided, treat it as the AUTHORITATIVE source for project intro paragraphs and highlight phrasing. For each project:
+- Identify the framing closest to this JOB SUMMARY's domain/seniority (backend, AI/ML, data, embedded, full-stack, etc.).
+- Use that variant's intro paragraph and pick highlights from that variant FIRST.
+- You may add 1-2 highlights from other variants if they directly address requirements in the JOB SUMMARY that the chosen variant doesn't cover.
+- Do NOT mash variants together by paraphrasing — copy the candidate's actual phrasing where possible (it has been tuned per role).
+- Do NOT include all variants of the same project. Pick one framing per project.
+
 Output strict JSON: { "resumeMarkdown": string }`;
   const user = `JOB: ${job.title} @ ${job.company ?? 'Unknown'}
 
@@ -107,8 +116,12 @@ ${JSON.stringify(jobSummary, null, 2)}
 MATCH ANALYSIS:
 ${JSON.stringify(match, null, 2)}
 
-CANDIDATE PROFILE:
-${JSON.stringify(profile, null, 2)}`;
+CANDIDATE PROFILE (structured):
+${JSON.stringify(profile, null, 2)}${
+    rawProfileMarkdown
+      ? `\n\nCANDIDATE PROFILE MARKDOWN (authoritative for project framing — pick the variant best matching the job):\n${rawProfileMarkdown}`
+      : ''
+  }`;
   const out = await callJson<{ resumeMarkdown?: string }>(system, user);
   return out.resumeMarkdown ?? '';
 }
@@ -207,6 +220,7 @@ async function generateCoverLetter(
   jobSummary: JobSummary,
   match: MatchAnalysis,
   job: SeekJob,
+  rawProfileMarkdown?: string,
 ): Promise<string> {
   const system = `You write SHORT cover letters (under 250 words, 3 paragraphs max). Tone: warm, confident, specific. Rules:
 - Para 1: why this role — reference one concrete thing from the job description
@@ -214,6 +228,9 @@ async function generateCoverLetter(
 - Para 3: brief closing with availability/interest
 - DO NOT invent facts not in the candidate profile
 - No clichés ("passionate self-starter", "team player", etc.)
+
+If CANDIDATE PROFILE MARKDOWN is provided and contains multiple framings of the same project (e.g. backend vs AI variants), pick the framing closest to the JOB SUMMARY domain when citing evidence — do not blend variants.
+
 Output strict JSON: { "coverLetter": string }`;
   const user = `ROLE: ${job.title} at ${job.company ?? 'the company'}
 
@@ -223,14 +240,19 @@ ${JSON.stringify(jobSummary, null, 2)}
 MATCH ANALYSIS:
 ${JSON.stringify(match, null, 2)}
 
-CANDIDATE PROFILE:
-${JSON.stringify(profile, null, 2)}`;
+CANDIDATE PROFILE (structured):
+${JSON.stringify(profile, null, 2)}${
+    rawProfileMarkdown
+      ? `\n\nCANDIDATE PROFILE MARKDOWN (authoritative for project framing):\n${rawProfileMarkdown}`
+      : ''
+  }`;
   const out = await callJson<{ coverLetter?: string }>(system, user);
   return out.coverLetter ?? '';
 }
 
 export type ChainOptions = {
   logger?: Logger;
+  rawProfileMarkdown?: string;
 };
 
 export async function runApplicationChain(
@@ -248,8 +270,8 @@ export async function runApplicationChain(
 
   log?.info({ jobId: job.jobId }, 'chain: stages 3-6 in parallel — resume, cover letter, company brief, interview pack');
   const [resumeMarkdown, coverLetter, companyBrief, interviewPack] = await Promise.all([
-    generateResume(profile, jobSummary, matchAnalysis, job),
-    generateCoverLetter(profile, jobSummary, matchAnalysis, job),
+    generateResume(profile, jobSummary, matchAnalysis, job, opts.rawProfileMarkdown),
+    generateCoverLetter(profile, jobSummary, matchAnalysis, job, opts.rawProfileMarkdown),
     generateCompanyBrief(profile, jobSummary, job),
     generateInterviewPack(profile, jobSummary, matchAnalysis, job),
   ]);
