@@ -1,13 +1,29 @@
 ############################
-# AutoBrowser (Node/TS/Playwright)
+# Browser-in-Agent MCP (Node/TS/Playwright)
 ############################
 
 # dependencies
 node_modules/
+.pnp/
+.pnp.js
 
 # build output
 dist/
+build/
 *.tsbuildinfo
+
+# local design / scratch docs (kept local — not tracked)
+DESIGN.md
+
+# env / secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+secrets/
+.secrets
 
 # logs (must not be committed)
 logs/
@@ -17,32 +33,34 @@ yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 
-# env / secrets
-.env
-.env.*
-!.env.example
-
 # OS / editor
 .DS_Store
+Thumbs.db
 .idea/
 .vscode/
+*.swp
+*.swo
+*~
 
 # caches
 .cache/
 .eslintcache
+.npm/
+.parcel-cache/
 
-# test / coverage
+# test / coverage / scratch
 coverage/
 .nyc_output/
+_smoke*.mjs
+smoke*.mjs
+scratch/
+tmp/
+*.tmp
 
 # Playwright artifacts
 playwright-report/
 test-results/
 **/*.trace.zip
-
-# misc
-*.tmp
-*.swp
 
 # local data store (SQLite)
 data/
@@ -53,5 +71,5 @@ data/
 # personal profile (kept local — never commit)
 profile/
 
-# generated applications (resumes, cover letters, etc. — kept local)
+# generated output (kept local)
 output/

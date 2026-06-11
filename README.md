@@ -1,226 +1,186 @@
-# AutoBrowser
+# Browser-in-Agent MCP
 
-AutoBrowser is a TypeScript / Node.js toolkit that drives a real browser (Playwright) from human-language instructions and turns the results into structured data and AI-generated artefacts. Today it focuses on a single end-to-end workflow: **extract a SEEK job posting → distill a personal profile → generate a tailored resume, cover letter, company brief, and interview pack** for that role.
+A **locally-deployed [MCP](https://modelcontextprotocol.io) server** that gives any
+MCP-capable agent (Claude, ChatGPT, DeepSeek, …) the ability to drive a real browser —
+the "Chrome-in-Claude" experience, opened up to every agent.
 
-## What's in the box
+The agent is the brain; this server is the hands. It exposes **atomic browser actions**
+as MCP tools and returns a **token-efficient, ref-tagged snapshot** of the page after each
+action, so the agent perceives and acts in a loop it fully controls.
 
-Three CLIs — composable, each usable on its own:
+> Architecture deep-dive: see [`DESIGN.md`](./DESIGN.md). This README is for using and deploying it.
 
-| Command | Purpose |
-| --- | --- |
-| `npm run seek:extract -- <seek-url>` | Open a SEEK job page, extract title / company / description / classification, cache to SQLite |
-| `npm run profile:distill` | Convert your free-form `profile/profile.md` into a structured JSON profile |
-| `npm run apply -- <jobIdOrUrl>` | Full chain: load job + profile, run match analysis, write tailored resume / cover letter / company brief / interview pack to `output/` |
+---
 
-A Fastify HTTP API exposes the same building blocks for programmatic use (`npm run dev`).
+## How it works
 
-## Setup
+```
+agent  ──MCP tool call──▶  this server  ──Playwright──▶  Chrome / Firefox
+       ◀──distilled snapshot──┘
+```
+
+1. **Perception, not screenshots.** `snapshot` returns a compact semantic tree where every
+   interactive element carries a stable `ref` (e.g. `e7`), plus headings and body text:
+
+   ```
+   - heading "Login"
+   - text "Sign in to continue"
+   - textbox "Username" [ref=e7]
+   - textbox "Password" [ref=e8]
+   - button "Sign in" [ref=e23]
+   ```
+
+2. **Atomic actions by ref.** The agent reasons over that tree and calls e.g.
+   `click(pageId, ref="e23", element="Sign in button")`. Every interactive action returns
+   the refreshed snapshot, so the agent immediately sees the result and decides the next step.
+
+3. **DOM + vision, agent's choice.** DOM-based perception is the default (cheap, robust).
+   When that's not enough, an agent with its own vision model uses `screenshot`; an agent
+   without vision (e.g. DeepSeek) calls `vision_query`, which screenshots the page and
+   forwards it to a configured vision provider (Kimi).
+
+4. **Precise multiplexing.** One server serves many agents; each agent may open many browsers
+   (Chrome and/or Firefox), each with many pages. Every action is addressed by `pageId` and
+   ownership is enforced per connection — agents can never touch each other's browsers.
+
+---
+
+## Tools
+
+| Category | Tools |
+|---|---|
+| Session | `create_browser` · `new_page` · `list_browsers` · `list_pages` · `close_page` · `close_browser` |
+| Navigation | `navigate` · `go_back` · `wait_for` |
+| Perception | `snapshot` · `screenshot` |
+| Interaction | `click` · `type` · `hover` · `clear` · `scroll` · `select_option` · `press_key` |
+| Vision | `vision_query` |
+
+`agentId` is **never** a tool argument — the server derives it from the MCP session, so
+isolation can't be bypassed. Workflow **guidelines** are exposed separately as MCP *prompts*
+(see below), not tools.
+
+---
+
+## Quick start
+
+Requires **Node.js ≥ 20** (tested on 26) and a POSIX shell (macOS / Linux).
 
 ```bash
-npm install
-npx playwright install chromium      # one-time, needed for the SEEK extractor
-cp .env.example .env                  # fill in OPENAI_API_KEY
-```
+# 1. one-click setup: installs deps, browsers, builds, creates .env
+./scripts/setup.sh
 
-Required env vars (see [.env.example](.env.example)):
-
-| Variable | Default | Notes |
-| --- | --- | --- |
-| `OPENAI_API_KEY` | — | required for any LLM step (distill, match, resume, cover letter) |
-| `OPENAI_MODEL` | `gpt-5.4` | any OpenAI chat-completions model |
-| `PORT` / `HOST` | `3000` / `0.0.0.0` | HTTP server only |
-| `HEADLESS` | `true` | Playwright mode |
-| `PROFILE_DIR` | `<cwd>/profile` | where `profile.md` and `profile.json` live |
-| `APPLICATIONS_DIR` | `<cwd>/output` | where generated resumes etc. land |
-| `SEEK_DB_PATH` | `<cwd>/data/seek_jobs.sqlite3` | SQLite cache for SEEK jobs and applications |
-| `LOG_LEVEL` | `info` | one of `debug`, `info`, `warn`, `error`, `silent` |
-| `LOG_JSON` | `false` | set `true` to emit machine-parseable JSON log lines on stderr |
-
-## Authoring your profile
-
-Create `profile/profile.md` with your background in free-form markdown — name, contact, education, summary, skills, experience, projects. The distiller is faithful (it will not invent anything you didn't write), so include every detail you might want pulled into a resume.
-
-### Multi-variant project descriptions
-
-If a project can be framed differently depending on the role you're applying for (e.g. backend vs AI vs data engineer), write multiple `#### Variant — <role focus>` sub-sections under one `### <Project Name>` heading. The distiller preserves all variants, and the resume/cover-letter generators pick the variant whose framing best matches the target job's domain — they won't blend them.
-
-```markdown
-### NVR LLM Code Assistant
-**Common tech:** ...
-
-#### Variant — AI / ML engineer focus
-[intro paragraph emphasizing model evaluation, fine-tuning, BLEU]
-- highlight
-- highlight
-
-#### Variant — Backend / platform engineer focus
-[intro paragraph emphasizing Celery+Redis pipeline, scalability]
-- highlight
-- highlight
-```
-
-A worked example lives in [doc/profile/profile.md](doc/profile/profile.md). Personal copies under `profile/` and `doc/profile/` are gitignored.
-
-## CLI: `seek:extract`
-
-Extracts a job posting from SEEK and caches it to the SQLite store at `data/seek_jobs.sqlite3`.
-
-```bash
-npm run seek:extract -- <seek-job-url> [options]
-
-Options:
-  --no-llm        Skip the LLM enrichment fallback (DOM-only extraction)
-  --no-store      Don't write to the SQLite store
-  --headed        Run the browser visibly (default headless)
-  --out <file>    Also write the extracted job JSON to <file>
-```
-
-Example:
-
-```bash
-npm run seek:extract -- https://www.seek.com.au/job/12345678
-npm run seek:extract -- https://www.seek.com.au/job/12345678 --headed --out job.json
-```
-
-## CLI: `profile:distill`
-
-Reads `profile/profile.md`, calls the LLM to convert it into a structured JSON profile, writes `profile/profile.json`. The result is cached against a hash of the markdown — re-running with no changes is a no-op.
-
-```bash
-npm run profile:distill              # distill if profile.md changed (or first run)
-npm run profile:distill -- --force   # re-distill even if hash matches
-```
-
-If `profile/profile.md` is missing, the CLI exits with a hint and exit code 2.
-
-## CLI: `apply`
-
-The full application-tailoring chain. In order:
-
-1. Load the structured profile (distilling first if needed).
-2. Load the cached SEEK job, or fetch it live if you passed a full URL.
-3. Stage 1 — summarise the job (must-haves vs nice-to-haves, tech stack, seniority).
-4. Stage 2 — match analysis (fit score, strengths/gaps with cited evidence, keywords to emphasise).
-5. Stages 3–6 in parallel — tailored resume, cover letter, company brief, interview pack.
-
-```bash
-npm run apply -- <jobIdOrSeekUrl> [options]
-
-Options:
-  --reextract       Re-fetch the job from SEEK even if it's cached
-  --force-profile   Re-distill profile.md before running
-  --headed          Show the browser window during extraction (only if fetching live)
-```
-
-Examples:
-
-```bash
-npm run apply -- 12345678                                          # uses cached job
-npm run apply -- https://www.seek.com.au/job/12345678              # fetch + cache + apply
-npm run apply -- https://www.seek.com.au/job/12345678 --reextract  # force re-fetch
-```
-
-### Output layout
-
-Generated artefacts go to `output/<company>-<job-title>/`, where company and title are slugified (lowercase, non-alphanumerics → hyphens). Re-running for the same role overwrites the contents in-place. A `last-updated-<timestamp>.txt` marker file inside the folder records the latest run time — its **filename** is the timestamp, so you can see when you last applied at a glance, and only the most recent marker is kept (older ones are removed each run).
-
-```
-output/
-└── canva-senior-backend-engineer/
-    ├── resume.md                            # tailored, variant-aware
-    ├── cover_letter.md                      # under 250 words, 3 paragraphs
-    ├── company_brief.md                     # company + role context, with "things to verify"
-    ├── interview_pack.md                    # likely Qs + draft answers + Qs to ask back
-    ├── match.json                           # fit score, strengths, gaps, keywords
-    ├── job_summary.json                     # parsed job structure
-    └── last-updated-2026-05-06T08-12-04Z.txt  # filename = latest run time (UTC)
-```
-
-The same data is also stored in the `job_applications` table of `data/seek_jobs.sqlite3` (so you can query history, build a dashboard, etc.).
-
-## HTTP API
-
-Start the server in watch mode:
-
-```bash
-npm run dev          # tsx watch on src/server.ts
+# 2. start the server
+npm start                 # production (built)   → http://localhost:7777/mcp
 # or
-npm run build && npm start
+npm run dev               # auto-reload dev mode
 ```
 
-Endpoints (all under `/v1`):
+The full step-by-step deployment guide is in [`docs/INSTALL.md`](./docs/INSTALL.md).
 
-| Method | Path | Purpose |
-| --- | --- | --- |
-| GET | `/healthz` | liveness |
-| POST | `/v1/execute` | run an instruction-driven browser action |
-| POST | `/v1/verify` | verification helpers |
-| POST | `/v1/jobs` | create an async browser job |
-| GET | `/v1/jobs/:jobId` | fetch job status / result |
-| POST | `/v1/jobs/:jobId/cancel` | cancel a running job |
-| POST | `/v1/jobs/:jobId/webhook` | register a completion webhook |
-| POST | `/v1/seek/extract` | extract a SEEK job (server-side equivalent of `seek:extract`) |
-| GET | `/v1/seek/jobs` | list cached SEEK jobs |
-| GET | `/v1/seek/jobs/:jobId` | fetch a cached SEEK job |
-| GET | `/v1/profile` | read the structured profile |
-| POST | `/v1/profile/distill` | re-distill `profile.md` |
-| POST | `/v1/applications/generate` | run the application chain (HTTP equivalent of `apply`) |
-| GET | `/v1/applications` | list generated applications |
-| GET | `/v1/applications/:jobId` | fetch one generated application |
+---
 
-## Other scripts
+## Configuration
+
+Set via CLI flags (highest priority) or environment / `.env`. See [`.env.example`](./.env.example).
+
+| CLI flag | Env var | Default | Purpose |
+|---|---|---|---|
+| `--port <n>` | `PORT` | `7777` | HTTP port |
+| `--headless` | `HEADLESS` | `true` | Run browsers headless (`HEADLESS=false` to watch) |
+| `--vision-provider <name>` | `VISION_PROVIDER` | — | Vision provider for `vision_query` (`kimi`) |
+| `--vision-api-key <key>` | `VISION_API_KEY` | — | Vision provider API key |
+| `--vision-model <id>` | `VISION_MODEL` | provider default | Override vision model |
+| `--vision-base-url <url>` | `VISION_BASE_URL` | provider default | Override vision endpoint |
+| `--guidelines <dir>` | `GUIDELINES_DIR` | `./guidelines` | Directory of `*.md` guideline playbooks |
 
 ```bash
-npm run build       # tsc -p tsconfig.json
-npm run start       # node dist/server.js
-npm run typecheck   # tsc --noEmit
+# example: server with Kimi vision and custom guidelines
+node dist/index.js --port 7777 --vision-provider kimi --vision-api-key sk-xxx --guidelines ./guidelines
 ```
+
+> **Security:** keep API keys in `.env` or pass them at launch — never commit them. If a key
+> ever appears in logs, chat, or a shared file, rotate it.
+
+---
+
+## Connecting an agent
+
+The server speaks **Streamable HTTP MCP** at `POST/GET/DELETE /mcp`. Point any MCP client at it.
+
+Minimal TypeScript client:
+
+```ts
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
+
+const client = new Client({ name: 'my-agent', version: '1.0.0' });
+await client.connect(new StreamableHTTPClientTransport(new URL('http://localhost:7777/mcp')));
+
+const { tools } = await client.listTools();
+const browser = await client.callTool({ name: 'create_browser', arguments: { engine: 'chromium' } });
+// → { browserId }, then new_page → snapshot → click/type by ref …
+```
+
+Each connection is one isolated agent session; its browsers are closed automatically when the
+connection ends.
+
+---
+
+## Vision fallback (Kimi)
+
+For agents whose LLM lacks vision. Configure a provider, then the agent calls `vision_query`:
+
+```bash
+node dist/index.js --vision-provider kimi --vision-api-key sk-your-kimi-key
+```
+
+```jsonc
+// agent → vision_query
+{ "pageId": "pg_…", "prompt": "What is the total shown and what color is the button?" }
+// ← { "text": "The total is $4.2M and the button is green." }
+```
+
+If no provider is configured, `vision_query` returns a clear `VISION_NOT_CONFIGURED` error so the
+agent can ask the user to set it up. Additional providers can be added under `src/vision/`.
+
+---
+
+## Workflow guidelines
+
+Drop Markdown playbooks into the guidelines directory and they become MCP **prompts** the agent
+can discover (`prompts/list`) and load (`prompts/get`) — e.g. a fixed "log in, open the dashboard,
+read the figures, summarize" routine. See [`guidelines/example-login-summary.md`](./guidelines/example-login-summary.md).
+
+---
 
 ## Project layout
 
 ```
 src/
-├── server.ts                # Fastify entrypoint
-├── routes/                  # HTTP handlers (execute, jobs, seek, profile, applications, verify)
-├── browser/                 # Playwright session/browser management
-├── executor/                # primitive browser actions
-├── actions/                 # higher-level action library
-├── planner/                 # LLM-backed instruction planner
-├── llm/                     # OpenAI client wrapper
-├── seek/                    # SEEK job extractor + SQLite cache + CLI
-├── profile/                 # profile.md → profile.json distiller + CLI
-├── application/             # job + profile → resume/cover-letter/brief/interview chain + CLI
-└── singletons.ts
-doc/profile/                 # personal profile drafts (gitignored)
-profile/                     # canonical profile.md / profile.json (gitignored)
-output/                      # generated applications (gitignored)
-data/                        # SQLite caches (gitignored)
+  index.ts          CLI entry → Express + Streamable HTTP MCP server
+  config/           configuration loading
+  browser/          Playwright launcher (chromium / firefox)
+  router/           SessionRegistry + BrowserRouter (agent→browser→page, ownership)
+  perception/       PageDistiller (ref-tagged tree + body text) + RefRegistry
+  actions/          7 atomic actions + base class + registry
+  executor/         per-page locked execution
+  vision/           pluggable vision providers (Kimi)
+  guidelines/       Markdown → MCP prompts
+  server/           MCP server wiring + tool/prompt registration
+scripts/setup.sh    one-click local install
+docs/INSTALL.md     deployment guide
+DESIGN.md           architecture (source of truth)
 ```
 
-## End-to-end example
+## Scripts
 
-```bash
-# 1. one-time setup
-npm install
-npx playwright install chromium
-cp .env.example .env && $EDITOR .env             # set OPENAI_API_KEY
+| Command | Does |
+|---|---|
+| `npm run dev` | Run from source with reload (`tsx`) |
+| `npm run build` | Compile TypeScript to `dist/` |
+| `npm start` | Run the built server |
+| `npm run typecheck` | Type-check without emitting |
 
-# 2. write your profile
-mkdir -p profile && $EDITOR profile/profile.md
+## License
 
-# 3. apply to a job
-npm run apply -- https://www.seek.com.au/job/12345678
-
-# resume + cover letter + brief + interview pack now live in
-# output/<company>-<title>/
-# (with a last-updated-<timestamp>.txt marker that refreshes on each re-run)
-```
-
-## Logging
-
-All CLIs emit structured logs to stderr at every step — browser launch, page navigation, JSON-LD parse, LLM request/response with token counts and latency, profile distillation, each chain stage, file writes, and DB upserts. Defaults to human-readable output; set `LOG_JSON=true` for one-JSON-per-line. Crank verbosity with `LOG_LEVEL=debug` or quieten with `LOG_LEVEL=warn`.
-
-```bash
-LOG_LEVEL=debug npm run apply -- <url>     # very verbose
-LOG_JSON=true npm run apply -- <url>       # for piping into jq / log shippers
-```
+Private / unpublished.
