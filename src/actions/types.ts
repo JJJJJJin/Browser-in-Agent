@@ -1,34 +1,29 @@
-import { z } from 'zod';
+import type { Page } from 'playwright';
 
-export const ActionTypeSchema = z.enum(['click', 'type', 'scroll', 'wait', 'assert']);
-export type ActionType = z.infer<typeof ActionTypeSchema>;
+import type { Logger } from '../logger.js';
+import type { RefRegistry } from '../perception/RefRegistry.js';
 
-export const ActionSpecSchema = z.object({
-  id: z.string().min(1),
-  type: ActionTypeSchema,
-  fieldVariables: z.record(z.string(), z.unknown()).default({}),
-});
+export type ActionKind =
+  | 'click'
+  | 'type'
+  | 'hover'
+  | 'clear'
+  | 'scroll'
+  | 'select_option'
+  | 'press_key';
 
-export type ActionSpec = z.infer<typeof ActionSpecSchema>;
+/** Everything an Action needs to operate on a single page. */
+export type ActionContext = {
+  page: Page;
+  refs: RefRegistry;
+  logger: Logger;
+};
 
-export type ActionResult =
-  | {
-      ok: true;
-      actionId: string;
-      type: ActionType;
-      startedAt: string;
-      finishedAt: string;
-      durationMs: number;
-      details?: Record<string, unknown>;
-    }
-  | {
-      ok: false;
-      actionId: string;
-      type: ActionType;
-      startedAt: string;
-      finishedAt: string;
-      durationMs: number;
-      error: { message: string; name?: string };
-      details?: Record<string, unknown>;
-    };
-
+/** Result of running a single action (the Executor pairs this with a fresh snapshot). */
+export type ActionOutcome = {
+  ok: boolean;
+  kind: ActionKind;
+  durationMs: number;
+  details?: Record<string, unknown>;
+  error?: { name: string; message: string };
+};

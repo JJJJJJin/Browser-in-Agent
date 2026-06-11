@@ -1,35 +1,37 @@
-import { z } from 'zod';
+import { Action } from './Action.js';
+import type { ActionContext, ActionKind } from './types.js';
 
-import { BaseAction, type ExecutionContext } from './BaseAction.js';
-import type { ActionSpec } from './types.js';
+const DEFAULT_TIMEOUT_MS = 15_000;
 
-const TypeFieldVariablesSchema = z.object({
-  selector: z.string().min(1),
-  text: z.string(),
-  clearFirst: z.boolean().optional(),
-  timeoutMs: z.number().int().positive().optional(),
-});
+/** Type text into an element. fieldVariables: { ref, text, clearFirst? }. */
+export class TypeAction extends Action {
+  readonly kind: ActionKind = 'type';
 
-type TypeFieldVariables = z.infer<typeof TypeFieldVariablesSchema>;
-
-export class TypeAction extends BaseAction<TypeFieldVariables> {
-  static type = 'type' as const;
-
-  constructor(spec: ActionSpec) {
-    super(spec);
-    this.fieldVariables = TypeFieldVariablesSchema.parse(this.fieldVariables);
+  constructor(
+    private readonly ref: string,
+    private readonly text: string,
+    private readonly clearFirst: boolean = false,
+  ) {
+    super();
   }
 
-  protected async runInternal(ctx: ExecutionContext) {
-    const { selector, text, clearFirst, timeoutMs } = this.fieldVariables;
-    const timeout = timeoutMs ?? 15_000;
-
-    const loc = ctx.page.locator(selector);
-    await loc.first().waitFor({ state: 'visible', timeout });
-    await loc.first().click({ timeout });
-    if (clearFirst) await loc.first().fill('', { timeout });
-    await loc.first().type(text, { timeout });
-    return { selector, chars: text.length, clearFirst: !!clearFirst };
+  protected async runInternal(
+    ctx: ActionContext,
+  ): Promise<Record<string, unknown>> {
+    const d = ctx.refs.resolve(this.ref);
+    const locator = ctx.page.locator(d.selector).nth(d.domIndex);
+    if (this.clearFirst) {
+      await locator.fill('', { timeout: DEFAULT_TIMEOUT_MS });
+    }
+    // Use pressSequentially so each keystroke fires real input events, which
+    // many widgets (autocomplete, validation) rely on.
+    await locator.pressSequentially(this.text, { timeout: DEFAULT_TIMEOUT_MS });
+    return {
+      ref: this.ref,
+      role: d.role,
+      name: d.name,
+      length: this.text.length,
+      clearFirst: this.clearFirst,
+    };
   }
 }
-

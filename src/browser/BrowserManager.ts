@@ -1,59 +1,34 @@
-import { chromium, type Browser, type BrowserContext, type Page } from 'playwright';
+import { chromium, firefox } from 'playwright';
+import type { Browser, BrowserContext } from 'playwright';
 
 import { createLogger } from '../logger.js';
+import type { Logger } from '../logger.js';
 
-const log = createLogger('browser');
+/** Supported Playwright browser engines. */
+export type Engine = 'chromium' | 'firefox';
 
-export type BrowserSession = {
-  sessionId: string;
-  browser: Browser;
-  context: BrowserContext;
-  page: Page;
-};
-
-type CreateOrGetOptions = {
-  sessionId?: string;
-  headless?: boolean;
-};
-
+/**
+ * Thin wrapper over Playwright engine launchers. It only knows how to launch a
+ * browser + a fresh context for a given engine; all session/ownership
+ * bookkeeping lives in SessionRegistry.
+ */
 export class BrowserManager {
-  private sessions = new Map<string, BrowserSession>();
+  private readonly logger: Logger;
 
-  async getOrCreateSession(opts: CreateOrGetOptions = {}): Promise<BrowserSession> {
-    const sessionId = opts.sessionId ?? `sess_${Date.now()}_${Math.random().toString(16).slice(2)}`;
-    const existing = this.sessions.get(sessionId);
-    if (existing) {
-      log.debug({ sessionId }, 'browser: reusing session');
-      return existing;
-    }
+  constructor(logger: Logger = createLogger('browser')) {
+    this.logger = logger;
+  }
 
-    const headless = opts.headless ?? (process.env.HEADLESS ?? 'true') !== 'false';
-    log.info({ sessionId, headless }, 'browser: launching chromium');
-    const start = Date.now();
-    const browser = await chromium.launch({ headless });
+  /** Launch a browser of the requested engine and open a fresh context. */
+  async launch(
+    engine: Engine,
+    headless: boolean,
+  ): Promise<{ browser: Browser; context: BrowserContext }> {
+    const launcher = engine === 'firefox' ? firefox : chromium;
+    this.logger.info({ engine, headless }, 'browser.launch');
+    const browser = await launcher.launch({ headless });
     const context = await browser.newContext();
-    const page = await context.newPage();
-    log.info({ sessionId, launchMs: Date.now() - start }, 'browser: session ready');
-
-    const session: BrowserSession = { sessionId, browser, context, page };
-    this.sessions.set(sessionId, session);
-    return session;
-  }
-
-  async closeSession(sessionId: string): Promise<void> {
-    const s = this.sessions.get(sessionId);
-    if (!s) return;
-    log.info({ sessionId }, 'browser: closing session');
-    this.sessions.delete(sessionId);
-    await s.context.close().catch(() => undefined);
-    await s.browser.close().catch(() => undefined);
-  }
-
-  async closeAll(): Promise<void> {
-    const ids = [...this.sessions.keys()];
-    if (ids.length === 0) return;
-    log.debug({ count: ids.length }, 'browser: closing all sessions');
-    await Promise.all(ids.map((id) => this.closeSession(id)));
+    this.logger.info({ engine }, 'browser.launched');
+    return { browser, context };
   }
 }
-

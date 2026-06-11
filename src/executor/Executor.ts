@@ -1,41 +1,58 @@
-import type { Logger } from 'pino';
-import type { Page } from 'playwright';
+import type { Action } from '../actions/Action.js';
+import type { ActionOutcome } from '../actions/types.js';
+import type { Logger } from '../logger.js';
+import type { PageDistiller } from '../perception/PageDistiller.js';
+import type { DistilledSnapshot } from '../perception/snapshotTypes.js';
+import type { BrowserRouter } from '../router/BrowserRouter.js';
 
-import type { BaseAction, ExecutionContext } from '../actions/BaseAction.js';
-import type { ActionResult } from '../actions/types.js';
+import { PageLock } from './PageLock.js';
 
-export type ExecutionResult = {
-  ok: boolean;
-  startedAt: string;
-  finishedAt: string;
-  durationMs: number;
-  results: ActionResult[];
-};
-
+/**
+ * Runs a single atomic action against a page, then returns a fresh distilled
+ * snapshot. Actions on the same pageId are serialized via PageLock (different
+ * pages run concurrently). After the action, the page is re-distilled and the
+ * page's RefRegistry is refreshed so the returned snapshot's refs are valid.
+ */
 export class Executor {
-  async execute(actions: BaseAction[], deps: { page: Page; logger: Logger }): Promise<ExecutionResult> {
-    const started = Date.now();
-    const startedAt = new Date(started).toISOString();
+  private readonly locks = new PageLock();
 
-    deps.logger.info({ actionCount: actions.length }, 'executor.start');
+  constructor(
+    private readonly router: BrowserRouter,
+    private readonly distiller: PageDistiller,
+    private readonly logger: Logger,
+  ) {}
 
-    const results: ActionResult[] = [];
-    const ctx: ExecutionContext = { page: deps.page, logger: deps.logger, variables: {} };
+  async run(
+    agentId: string,
+    pageId: string,
+    action: Action,
+  ): Promise<{ outcome: ActionOutcome; snapshot: DistilledSnapshot }> {
+    // Ownership / existence is enforced here; throws OwnershipError/NotFoundError.
+    const record = this.router.resolvePage(agentId, pageId);
 
-    for (const action of actions) {
-      const res = await action.run(ctx);
-      results.push(res);
-      if (!res.ok) break;
-    }
+    return this.locks.run(pageId, async () => {
+      const log = this.logger.child({ scope: 'executor', agentId, pageId });
 
-    const finished = Date.now();
-    const finishedAt = new Date(finished).toISOString();
-    const durationMs = finished - started;
-    const ok = results.every((r) => r.ok);
+      const outcome = await action.start({
+        page: record.page,
+        refs: record.refs,
+        logger: log,
+      });
 
-    deps.logger.info({ ok, durationMs }, 'executor.finish');
+      // Always re-distill so the agent sees the post-action page, even on a
+      // failed action (the failure detail is in `outcome`).
+      const { snapshot, descriptors } = await this.distiller.distill(
+        record.page,
+        pageId,
+      );
+      record.refs.set(descriptors);
 
-    return { ok, startedAt, finishedAt, durationMs, results };
+      log.info(
+        { kind: outcome.kind, ok: outcome.ok, elementCount: snapshot.elementCount },
+        'executor.run.complete',
+      );
+
+      return { outcome, snapshot };
+    });
   }
 }
-
