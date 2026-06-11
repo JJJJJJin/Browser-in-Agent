@@ -29,7 +29,7 @@ export const DEFAULTS = {
 
 /**
  * Parse argv (process.argv.slice(2)) and env into a Config.
- * Implemented by the foundation; see DESIGN.md §8.
+ * Implemented by the foundation; see docs/System_Architecture.md §8.
  */
 export function loadConfig(argv: string[], env: NodeJS.ProcessEnv): Config {
   const flags = new Map<string, string | boolean>();

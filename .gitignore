@@ -12,8 +12,6 @@ dist/
 build/
 *.tsbuildinfo
 
-# local design / scratch docs (kept local — not tracked)
-DESIGN.md
 
 # env / secrets
 .env

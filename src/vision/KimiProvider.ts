@@ -7,7 +7,7 @@ const DEFAULT_MODEL = 'moonshot-v1-8k-vision-preview';
 
 /**
  * Vision provider backed by Moonshot/Kimi's OpenAI-compatible chat completions
- * endpoint (DESIGN.md §5.8). The image is sent inline as a base64 data URL.
+ * endpoint (docs/System_Architecture.md §5.8). The image is sent inline as a base64 data URL.
  */
 export class KimiProvider implements VisionProvider {
   readonly name = 'kimi';

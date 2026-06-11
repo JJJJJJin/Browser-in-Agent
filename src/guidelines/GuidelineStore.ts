@@ -4,7 +4,7 @@ import { NotFoundError } from '../errors.js';
 
 /**
  * Loads agent-facing guideline documents (*.md) from a configured directory.
- * These are exposed to agents via MCP prompts (DESIGN.md §6): `list()` powers
+ * These are exposed to agents via MCP prompts (docs/System_Architecture.md §6): `list()` powers
  * `prompts/list`, `get(name)` powers `prompts/get`.
  */
 export class GuidelineStore {

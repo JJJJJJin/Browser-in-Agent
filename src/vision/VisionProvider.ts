@@ -1,5 +1,5 @@
 /**
- * Pluggable vision provider contract (DESIGN.md §5.8).
+ * Pluggable vision provider contract (docs/System_Architecture.md §5.8).
  *
  * The server forwards a page screenshot + a natural-language prompt to a vision
  * provider on behalf of agents that cannot see images themselves. Concrete

@@ -68,7 +68,7 @@ function errorResult(err: unknown): ToolResult {
 /**
  * Build a fully-configured MCP server bound to a single agent. `agentId` is
  * closed over by every tool handler and is never exposed as a tool parameter
- * (DESIGN.md §3 / §6) — it comes from the transport's Mcp-Session-Id.
+ * (docs/System_Architecture.md §3 / §6) — it comes from the transport's Mcp-Session-Id.
  */
 export function createMcpServerForAgent(agentId: string, deps: McpServerDeps): McpServer {
   const { router, executor, distiller, vision, guidelines, logger } = deps;

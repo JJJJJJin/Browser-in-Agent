@@ -7,7 +7,7 @@ import { KimiProvider } from './KimiProvider.js';
 const SUPPORTED_PROVIDERS = ['kimi'] as const;
 
 /**
- * Build a VisionProvider from config (DESIGN.md §5.8).
+ * Build a VisionProvider from config (docs/System_Architecture.md §5.8).
  * Returns undefined when no vision config was supplied (vision is optional).
  * Throws for an unknown/unsupported provider name.
  */

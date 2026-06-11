@@ -8,7 +8,7 @@ The agent is the brain; this server is the hands. It exposes **atomic browser ac
 as MCP tools and returns a **token-efficient, ref-tagged snapshot** of the page after each
 action, so the agent perceives and acts in a loop it fully controls.
 
-> Architecture deep-dive: see [`DESIGN.md`](./DESIGN.md). This README is for using and deploying it.
+> Architecture deep-dive: see [`docs/System_Architecture.md`](./docs/System_Architecture.md). This README is for using and deploying it.
 
 ---
 
@@ -168,8 +168,8 @@ src/
   guidelines/       Markdown → MCP prompts
   server/           MCP server wiring + tool/prompt registration
 scripts/setup.sh    one-click local install
-docs/INSTALL.md     deployment guide
-DESIGN.md           architecture (source of truth)
+docs/INSTALL.md             deployment guide
+docs/System_Architecture.md architecture reference
 ```
 
 ## Scripts

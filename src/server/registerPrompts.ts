@@ -3,7 +3,7 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { GuidelineStore } from '../guidelines/GuidelineStore.js';
 
 /**
- * Expose each guideline document as an MCP prompt (DESIGN.md §6): agents can
+ * Expose each guideline document as an MCP prompt (docs/System_Architecture.md §6): agents can
  * discover them via `prompts/list` and load the markdown via `prompts/get`.
  * Each prompt returns the file content as a single user message.
  */
