@@ -43,3 +43,15 @@ test-results/
 # misc
 *.tmp
 *.swp
+
+# local data store (SQLite)
+data/
+*.sqlite3
+*.sqlite3-wal
+*.sqlite3-shm
+
+# personal profile (kept local — never commit)
+profile/
+
+# generated applications (resumes, cover letters, etc. — kept local)
+output/
