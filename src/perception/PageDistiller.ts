@@ -19,6 +19,8 @@ type RawInteractive = {
   domIndex: number;
   /** Document order, used to interleave with headings. */
   order: number;
+  /** True when this element lives inside an active (blocking) modal dialog. */
+  inModal: boolean;
 };
 
 type RawHeading = {
@@ -39,6 +41,8 @@ type RawCollect = {
   interactive: RawInteractive[];
   headings: RawHeading[];
   texts: RawText[];
+  /** The topmost active modal dialog, if one is blocking the page. */
+  modal: { present: boolean; name: string };
 };
 
 /**
@@ -168,6 +172,49 @@ export class PageDistiller {
           document.querySelectorAll<HTMLElement>(interactiveSelector),
         ).filter(isVisible);
 
+        // ---- Modal detection -------------------------------------------------
+        // A modal dialog drawn over a scrim blocks all interaction with the page
+        // behind it, yet (a) the scrim is a non-interactive <div> we never emit
+        // and (b) the dialog is injected late in the DOM, so its controls sort
+        // last and get truncated out of the bounded tree. We detect the dialog
+        // here so the Node side can surface it first.
+        const modalSelector =
+          '[role="dialog"], [role="alertdialog"], [aria-modal="true"], dialog[open]';
+        const modalEls = Array.from(
+          document.querySelectorAll<HTMLElement>(modalSelector),
+        ).filter(isVisible);
+        try {
+          // Native top-layer dialogs opened via showModal() match :modal.
+          for (const el of Array.from(document.querySelectorAll<HTMLElement>(':modal'))) {
+            if (!modalEls.includes(el)) modalEls.push(el);
+          }
+        } catch {
+          // :modal unsupported in this engine — semantic selectors still apply.
+        }
+        const inModal = (el: Element): boolean => modalEls.some((m) => m.contains(el));
+
+        const modalNameFor = (m: Element): string => {
+          const aria = m.getAttribute('aria-label');
+          if (aria && aria.trim()) return aria.trim();
+          const labelledby = m.getAttribute('aria-labelledby');
+          if (labelledby) {
+            const parts = labelledby
+              .split(/\s+/)
+              .map((id) => document.getElementById(id)?.textContent?.trim())
+              .filter(Boolean);
+            if (parts.length) return parts.join(' ');
+          }
+          const heading = m.querySelector('h1, h2, h3, h4, h5, h6, [role="heading"]');
+          const headingText = (heading as HTMLElement | null)?.innerText?.trim();
+          if (headingText) return headingText;
+          return '';
+        };
+        // The last matched dialog is the most recently opened / topmost one.
+        const topModal = modalEls.length ? modalEls[modalEls.length - 1] : null;
+        const modal = topModal
+          ? { present: true, name: normalize(modalNameFor(topModal)) }
+          : { present: false, name: '' };
+
         // Cache: count of matches per selector so we can compute nth index.
         const matchCache = new Map<string, Element[]>();
         const matchesFor = (selector: string): Element[] => {
@@ -189,6 +236,7 @@ export class PageDistiller {
           selector: string;
           domIndex: number;
           order: number;
+          inModal: boolean;
         }> = [];
 
         for (const el of interactiveEls) {
@@ -203,6 +251,7 @@ export class PageDistiller {
             selector,
             domIndex,
             order: orderOf.get(el) ?? 0,
+            inModal: inModal(el),
           });
         }
 
@@ -261,6 +310,7 @@ export class PageDistiller {
           interactive,
           headings,
           texts,
+          modal,
         };
       },
       { maxInteractive: MAX_INTERACTIVE, maxHeadings: MAX_HEADINGS, maxTexts: MAX_TEXTS },
@@ -277,17 +327,23 @@ export class PageDistiller {
     }));
 
     // Build a combined, document-ordered list of renderable lines (headings
-    // without refs for context, interactive elements with refs).
+    // without refs for context, interactive elements with refs). Interactive
+    // controls inside an active modal are split out so they can be rendered
+    // first — a modal injected late in the DOM would otherwise sort last and be
+    // truncated out of the bounded tree, leaving the agent unable to dismiss it.
     type Line = { order: number; text: string };
     const lines: Line[] = [];
+    const modalLines: Line[] = [];
 
     ordered.forEach((row, i) => {
       const descriptor = descriptors[i];
       if (!descriptor) return;
       const name = descriptor.name ? ` "${descriptor.name}"` : '';
-      lines.push({
+      const text = `- ${descriptor.role}${name} [ref=${descriptor.ref}]`;
+      // Indent modal controls so the tree reads as nested under the dialog line.
+      (row.inModal ? modalLines : lines).push({
         order: row.order,
-        text: `- ${descriptor.role}${name} [ref=${descriptor.ref}]`,
+        text: row.inModal ? `  ${text}` : text,
       });
     });
 
@@ -301,12 +357,30 @@ export class PageDistiller {
     }
 
     lines.sort((a, b) => a.order - b.order);
+    modalLines.sort((a, b) => a.order - b.order);
 
+    // Render the modal block first (header + its controls) so it is never
+    // dropped by truncation, then fill the remaining budget with page content.
     let tree = '';
-    for (const line of lines) {
-      const candidate = tree ? `${tree}\n${line.text}` : line.text;
-      if (candidate.length > MAX_TREE_CHARS) break;
+    const append = (text: string): boolean => {
+      const candidate = tree ? `${tree}\n${text}` : text;
+      if (candidate.length > MAX_TREE_CHARS) return false;
       tree = candidate;
+      return true;
+    };
+
+    if (raw.modal.present) {
+      const name = raw.modal.name ? ` "${raw.modal.name}"` : '';
+      append(
+        `- dialog${name} (modal — blocks the page; dismiss it before other actions)`,
+      );
+      for (const line of modalLines) {
+        if (!append(line.text)) break;
+      }
+    }
+
+    for (const line of lines) {
+      if (!append(line.text)) break;
     }
 
     const snapshot: DistilledSnapshot = {

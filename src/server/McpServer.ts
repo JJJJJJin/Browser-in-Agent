@@ -330,12 +330,20 @@ export function createMcpServerForAgent(agentId: string, deps: McpServerDeps): M
   server.registerTool(
     'click',
     {
-      description: 'Click an element resolved from a snapshot ref. Returns the updated snapshot.',
-      inputSchema: { pageId: z.string().min(1), ref: z.string().min(1), element: elementField },
+      description:
+        'Click an element resolved from a snapshot ref. Returns the updated snapshot. ' +
+        'Set force=true to bypass actionability checks (visibility/stability) when an ' +
+        'element is invisible or overlaid but still blocking — e.g. to dismiss hidden overlays.',
+      inputSchema: {
+        pageId: z.string().min(1),
+        ref: z.string().min(1),
+        element: elementField,
+        force: z.boolean().optional(),
+      },
     },
-    async ({ pageId, ref }): Promise<ToolResult> => {
+    async ({ pageId, ref, force }): Promise<ToolResult> => {
       try {
-        const action = actionFromSpec('click', { ref });
+        const action = actionFromSpec('click', { ref, force });
         const { outcome, snapshot } = await executor.run(agentId, pageId, action);
         return {
           content: [textContent(JSON.stringify({ outcome })), snapshotContent(snapshot)],

@@ -12,6 +12,11 @@ import type { ActionKind } from './types.js';
 
 const refSchema = z.object({ ref: z.string().min(1) });
 
+const clickSchema = z.object({
+  ref: z.string().min(1),
+  force: z.boolean().optional(),
+});
+
 const typeSchema = z.object({
   ref: z.string().min(1),
   text: z.string(),
@@ -68,8 +73,8 @@ export function actionFromSpec(
 
   switch (kind) {
     case 'click': {
-      const { ref } = refSchema.parse(params);
-      return new ClickAction(ref);
+      const { ref, force } = clickSchema.parse(params);
+      return new ClickAction(ref, force ?? false);
     }
     case 'type': {
       const { ref, text, clearFirst } = typeSchema.parse(params);
