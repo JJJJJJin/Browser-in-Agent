@@ -115,7 +115,6 @@ export class PageDistiller {
             if (type === 'checkbox') return 'checkbox';
             if (type === 'radio') return 'radio';
             if (type === 'button' || type === 'submit' || type === 'reset') return 'button';
-            if (type === 'submit') return 'button';
             return 'textbox';
           }
           return 'text';

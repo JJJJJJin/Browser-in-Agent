@@ -132,6 +132,21 @@ async function main(): Promise<void> {
     );
   });
 
+  // Surface bind failures clearly. Without this, an EADDRINUSE error is emitted
+  // a tick after the (misleading) 'server.listening' log, and the process dies
+  // silently — making a port collision look like a clean start that vanished.
+  httpServer.on('error', (err: NodeJS.ErrnoException) => {
+    if (err.code === 'EADDRINUSE') {
+      logger.error(
+        { port: config.port },
+        'server.port_in_use',
+      );
+    } else {
+      logger.error({ err: err.message }, 'server.error');
+    }
+    process.exit(1);
+  });
+
   // ---- Graceful shutdown ------------------------------------------------
   let shuttingDown = false;
   const shutdown = async (signal: string): Promise<void> => {
