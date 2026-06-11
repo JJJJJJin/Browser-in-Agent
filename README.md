@@ -8,7 +8,7 @@ The agent is the brain; this server is the hands. It exposes **atomic browser ac
 as MCP tools and returns a **token-efficient, ref-tagged snapshot** of the page after each
 action, so the agent perceives and acts in a loop it fully controls.
 
-> Architecture deep-dive: see [`docs/System_Architecture.md`](./docs/System_Architecture.md). This README is for using and deploying it.
+> Architecture deep-dive: see [`docs/System_Architecture.md`](./docs/System_Architecture.md) (中文: [`docs/zh/System_Architecture.md`](./docs/zh/System_Architecture.md)). This README is for using and deploying it.
 
 ---
 

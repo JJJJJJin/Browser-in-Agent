@@ -26,9 +26,9 @@ export type DistilledSnapshot = {
   scroll: { x: number; y: number };
   /**
    * Text tree shown to the agent, e.g.:
-   *   - heading "登录"
-   *   - textbox "用户名" [ref=e7]
-   *   - button "登录" [ref=e23]
+   *   - heading "Login"
+   *   - textbox "Username" [ref=e7]
+   *   - button "Sign in" [ref=e23]
    */
   tree: string;
   /** Number of interactive elements captured (refs assigned). */
