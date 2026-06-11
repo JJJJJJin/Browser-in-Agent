@@ -59,6 +59,8 @@ agent  ──MCP tool call──▶  this server  ──Playwright──▶  Chr
 isolation can't be bypassed. Workflow **guidelines** are exposed separately as MCP *prompts*
 (see below), not tools.
 
+Users can also create additional scripts/tools to simplify the working progress (you don't want agent to interate 100 items in a list element and have reasoning for each one to merely get the item info, a simple tool/script can somehow achieve this).
+
 ---
 
 ## Quick start
@@ -92,6 +94,7 @@ Set via CLI flags (highest priority) or environment / `.env`. See [`.env.example
 | `--vision-model <id>` | `VISION_MODEL` | provider default | Override vision model |
 | `--vision-base-url <url>` | `VISION_BASE_URL` | provider default | Override vision endpoint |
 | `--guidelines <dir>` | `GUIDELINES_DIR` | `./guidelines` | Directory of `*.md` guideline playbooks |
+
 
 ```bash
 # example: server with Kimi vision and custom guidelines
@@ -128,7 +131,7 @@ connection ends.
 
 ## Vision fallback (Kimi)
 
-For agents whose LLM lacks vision. Configure a provider, then the agent calls `vision_query`:
+For agents whose LLM lacks vision (e.g. Deepseek). Configure a provider, then the agent calls `vision_query`:
 
 ```bash
 node dist/index.js --vision-provider kimi --vision-api-key sk-your-kimi-key
@@ -142,6 +145,7 @@ node dist/index.js --vision-provider kimi --vision-api-key sk-your-kimi-key
 
 If no provider is configured, `vision_query` returns a clear `VISION_NOT_CONFIGURED` error so the
 agent can ask the user to set it up. Additional providers can be added under `src/vision/`.
+
 
 ---
 
