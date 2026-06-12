@@ -13,6 +13,7 @@ import { Executor } from './executor/Executor.js';
 import { GuidelineStore } from './guidelines/GuidelineStore.js';
 import { createLogger } from './logger.js';
 import { PageDistiller } from './perception/PageDistiller.js';
+import { PageReader } from './perception/PageReader.js';
 import { BrowserRouter } from './router/BrowserRouter.js';
 import { SessionRegistry } from './router/SessionRegistry.js';
 import { createMcpServerForAgent } from './server/McpServer.js';
@@ -28,6 +29,7 @@ async function main(): Promise<void> {
   const registry = new SessionRegistry(manager, config.headless, logger.child({ scope: 'registry' }));
   const router = new BrowserRouter(registry);
   const distiller = new PageDistiller();
+  const reader = new PageReader();
   const executor = new Executor(router, distiller, logger.child({ scope: 'executor' }));
   const vision = createVisionProvider(config.vision);
   const guidelines = new GuidelineStore(config.guidelinesDir);
@@ -36,6 +38,7 @@ async function main(): Promise<void> {
     router,
     executor,
     distiller,
+    reader,
     vision,
     guidelines,
     logger,

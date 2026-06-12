@@ -83,6 +83,7 @@ src/
     BrowserRouter.ts          # high-level facade: resolvePage(agentId,pageId)→Page; wraps registry + checks
   perception/
     PageDistiller.ts          # Page → { tree: string, refs } distilled semantic tree (with refs)
+    PageReader.ts             # Page → readable text content (main-content/full/selector, paginated); for reading not acting
     RefRegistry.ts            # per-page: ref(e1,e2…) → ElementDescriptor (selector/index); refreshed per snapshot
     snapshotTypes.ts          # DistilledSnapshot and related types
   actions/
@@ -262,6 +263,7 @@ All tool inputs are validated with zod. **`pageId` is required** (except session
 | `go_back` | `{ pageId }` | `{ snapshot }` |
 | `wait_for` | `{ pageId, text?, selector?, state?, timeoutMs? }` | `{ snapshot }` |
 | `snapshot` | `{ pageId }` | `{ snapshot }` |
+| `page_read` | `{ pageId, selector?, mode?: 'main'\|'full', maxChars?, offset? }` | `{ header, text }` — readable page content; `main` (default) extracts the primary article skipping nav/footer, `full` reads the whole body, `selector` scopes to a region; long pages paginate via `offset`/`nextOffset` |
 | `screenshot` | `{ pageId, fullPage? }` | MCP image content (base64) |
 | `click` | `{ pageId, ref, element }` | `{ outcome, snapshot }` |
 | `type` | `{ pageId, ref, element, text, clearFirst? }` | `{ outcome, snapshot }` |
