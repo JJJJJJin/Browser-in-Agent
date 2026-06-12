@@ -8,6 +8,7 @@ import type { Executor } from '../executor/Executor.js';
 import type { GuidelineStore } from '../guidelines/GuidelineStore.js';
 import type { Logger } from '../logger.js';
 import type { PageDistiller } from '../perception/PageDistiller.js';
+import type { PageReader } from '../perception/PageReader.js';
 import type { DistilledSnapshot, ElementDescriptor } from '../perception/snapshotTypes.js';
 import type { PageRecord } from '../router/SessionRegistry.js';
 import type { BrowserRouter } from '../router/BrowserRouter.js';
@@ -21,6 +22,7 @@ export type McpServerDeps = {
   router: BrowserRouter;
   executor: Executor;
   distiller: PageDistiller;
+  reader: PageReader;
   vision: VisionProvider | undefined;
   guidelines: GuidelineStore;
   logger: Logger;
@@ -71,7 +73,7 @@ function errorResult(err: unknown): ToolResult {
  * (docs/System_Architecture.md §3 / §6) — it comes from the transport's Mcp-Session-Id.
  */
 export function createMcpServerForAgent(agentId: string, deps: McpServerDeps): McpServer {
-  const { router, executor, distiller, vision, guidelines, logger } = deps;
+  const { router, executor, distiller, reader, vision, guidelines, logger } = deps;
   const log = logger.child({ scope: 'mcp', agentId });
 
   const server = new McpServer({
@@ -297,6 +299,54 @@ export function createMcpServerForAgent(agentId: string, deps: McpServerDeps): M
         const snapshot = await distillAndRefresh(record);
         return { content: [snapshotContent(snapshot)] };
       } catch (err) {
+        return errorResult(err);
+      }
+    },
+  );
+
+  server.registerTool(
+    'page_read',
+    {
+      description:
+        'Read and extract the readable text content of a page (prose, headings, lists, tables) ' +
+        'for reading, summarizing, or fact extraction. Unlike `snapshot` (a capped interactive-element ' +
+        'tree for acting), this returns the full body text. ' +
+        'By default it extracts the main content (article/main, skipping nav/header/footer); pass ' +
+        'mode="full" to read the whole body, or `selector` to read only one region. Long pages are ' +
+        'paginated: when the result is truncated, call again with the returned `nextOffset`.',
+      inputSchema: {
+        pageId: z.string().min(1),
+        selector: z.string().min(1).optional(),
+        mode: z.enum(['main', 'full']).optional(),
+        maxChars: z.number().int().positive().optional(),
+        offset: z.number().int().nonnegative().optional(),
+      },
+    },
+    async ({ pageId, selector, mode, maxChars, offset }): Promise<ToolResult> => {
+      try {
+        const record = router.resolvePage(agentId, pageId);
+        const result = await reader.read(record.page, { selector, mode, maxChars, offset });
+        const header = JSON.stringify({
+          pageId,
+          url: result.url,
+          title: result.title,
+          mode: result.mode,
+          ...(result.selector !== undefined ? { selector: result.selector } : {}),
+          totalChars: result.totalChars,
+          offset: result.offset,
+          returnedChars: result.returnedChars,
+          truncated: result.truncated,
+          ...(result.nextOffset !== undefined ? { nextOffset: result.nextOffset } : {}),
+        });
+        if (selector && result.totalChars === 0) {
+          return {
+            isError: true,
+            content: [textContent(`${header}\nNo element matched selector: ${selector}`)],
+          };
+        }
+        return { content: [textContent(`${header}\n${result.text}`)] };
+      } catch (err) {
+        log.error({ err: (err as Error).message }, 'page_read.error');
         return errorResult(err);
       }
     },
