@@ -6,6 +6,8 @@
  *     --vision-model moonshot-v1-8k-vision-preview \
  *     --guidelines ./guidelines
  */
+import type { BrowserLaunchConfig } from '../browser/BrowserManager.js';
+
 export type VisionConfig = {
   provider: string;
   apiKey: string;
@@ -16,6 +18,8 @@ export type VisionConfig = {
 export type Config = {
   port: number;
   headless: boolean;
+  /** How browsers are launched: Playwright-bundled or a system-installed browser. */
+  browser: BrowserLaunchConfig;
   /** Present only when a vision provider + api key were supplied. */
   vision?: VisionConfig;
   guidelinesDir: string;
@@ -25,6 +29,8 @@ export const DEFAULTS = {
   port: 7777,
   headless: true,
   guidelinesDir: './guidelines',
+  browserSource: 'playwright',
+  systemBrowser: 'chrome',
 } as const;
 
 /**
@@ -67,6 +73,21 @@ export function loadConfig(argv: string[], env: NodeJS.ProcessEnv): Config {
 
   const guidelinesDir = str('guidelines', 'GUIDELINES_DIR') ?? DEFAULTS.guidelinesDir;
 
+  // ---- Browser source ---------------------------------------------------
+  const sourceRaw = (str('browser-source', 'BROWSER_SOURCE') ?? DEFAULTS.browserSource).toLowerCase();
+  const source = sourceRaw === 'system' ? 'system' : 'playwright';
+
+  const sysRaw = (str('system-browser', 'SYSTEM_BROWSER') ?? DEFAULTS.systemBrowser).toLowerCase();
+  const systemBrowser = sysRaw === 'firefox' ? 'firefox' : 'chrome';
+
+  const systemBrowserPath = str('system-browser-path', 'SYSTEM_BROWSER_PATH');
+
+  const browser: BrowserLaunchConfig = {
+    source,
+    systemBrowser,
+    ...(systemBrowserPath ? { systemBrowserPath } : {}),
+  };
+
   const provider = str('vision-provider', 'VISION_PROVIDER');
   const apiKey = str('vision-api-key', 'VISION_API_KEY');
   const vision: VisionConfig | undefined =
@@ -79,5 +100,5 @@ export function loadConfig(argv: string[], env: NodeJS.ProcessEnv): Config {
         }
       : undefined;
 
-  return { port, headless, vision, guidelinesDir };
+  return { port, headless, browser, vision, guidelinesDir };
 }

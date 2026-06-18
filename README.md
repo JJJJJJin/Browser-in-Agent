@@ -89,6 +89,9 @@ Set via CLI flags (highest priority) or environment / `.env`. See [`.env.example
 |---|---|---|---|
 | `--port <n>` | `PORT` | `7777` | HTTP port |
 | `--headless` | `HEADLESS` | `true` | Run browsers headless (`HEADLESS=false` to watch) |
+| `--browser-source <src>` | `BROWSER_SOURCE` | `playwright` | `playwright` (bundled) or `system` (use an installed browser; helps with some fingerprinting signals) |
+| `--system-browser <name>` | `SYSTEM_BROWSER` | `chrome` | `chrome` or `firefox`; only used when source is `system` |
+| `--system-browser-path <path>` | `SYSTEM_BROWSER_PATH` | auto-detect | Explicit browser executable path; overrides auto-detection (mac / win / Raspberry Pi OS) |
 | `--vision-provider <name>` | `VISION_PROVIDER` | — | Vision provider for `vision_query` (`kimi`) |
 | `--vision-api-key <key>` | `VISION_API_KEY` | — | Vision provider API key |
 | `--vision-model <id>` | `VISION_MODEL` | provider default | Override vision model |

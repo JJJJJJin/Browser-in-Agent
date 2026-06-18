@@ -49,11 +49,23 @@ export class SessionRegistry {
 
   /** Launch a new browser for an agent and register it. */
   async createBrowser(agentId: string, engine: Engine): Promise<BrowserRecord> {
-    const { browser, context } = await this.manager.launch(engine, this.headless);
+    // `effectiveEngine` may differ from the requested one when the server is
+    // configured to drive a system browser (e.g. firefox requested, but the
+    // configured system browser is chrome → chromium).
+    const { browser, context, engine: effectiveEngine } = await this.manager.launch(
+      engine,
+      this.headless,
+    );
     const browserId = `br_${++this.browserCounter}_${randomUUID().slice(0, 8)}`;
-    const record: BrowserRecord = { browserId, agentId, engine, browser, context };
+    const record: BrowserRecord = {
+      browserId,
+      agentId,
+      engine: effectiveEngine,
+      browser,
+      context,
+    };
     this.browsers.set(browserId, record);
-    this.logger.info({ agentId, browserId, engine }, 'browser.create');
+    this.logger.info({ agentId, browserId, engine: effectiveEngine }, 'browser.create');
     return record;
   }
 

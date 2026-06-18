@@ -8,6 +8,7 @@ import express from 'express';
 import type { Request, Response } from 'express';
 
 import { BrowserManager } from './browser/BrowserManager.js';
+import { SystemBrowserLocator } from './browser/SystemBrowserLocator.js';
 import { loadConfig } from './config/Config.js';
 import { Executor } from './executor/Executor.js';
 import { GuidelineStore } from './guidelines/GuidelineStore.js';
@@ -25,7 +26,8 @@ async function main(): Promise<void> {
   const logger = createLogger('server');
 
   // ---- Singletons -------------------------------------------------------
-  const manager = new BrowserManager(logger.child({ scope: 'browser' }));
+  const locator = new SystemBrowserLocator(process.env, logger.child({ scope: 'locator' }));
+  const manager = new BrowserManager(config.browser, locator, logger.child({ scope: 'browser' }));
   const registry = new SessionRegistry(manager, config.headless, logger.child({ scope: 'registry' }));
   const router = new BrowserRouter(registry);
   const distiller = new PageDistiller();
@@ -130,7 +132,14 @@ async function main(): Promise<void> {
 
   const httpServer = app.listen(config.port, () => {
     logger.info(
-      { port: config.port, headless: config.headless, vision: vision?.name ?? 'none' },
+      {
+        port: config.port,
+        headless: config.headless,
+        browserSource: config.browser.source,
+        systemBrowser:
+          config.browser.source === 'system' ? config.browser.systemBrowser : undefined,
+        vision: vision?.name ?? 'none',
+      },
       'server.listening',
     );
   });
